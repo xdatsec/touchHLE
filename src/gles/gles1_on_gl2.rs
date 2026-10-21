@@ -491,7 +491,10 @@ impl GLES1OnGL2<'_> {
                     gl21::ACTIVE_TEXTURE,
                     &mut active_texture as *mut _ as *mut _,
                 );
-                if !self.state.fixed_point_texture_units.contains(&active_texture)
+                if !self
+                    .state
+                    .fixed_point_texture_units
+                    .contains(&active_texture)
                     && !self.state.byte_texture_units.contains(&active_texture)
                 {
                     continue;
@@ -649,8 +652,12 @@ impl GLES1OnGL2<'_> {
                         gl21::ACTIVE_TEXTURE,
                         &mut active_texture as *mut _ as *mut _,
                     );
-                    assert!(self.state.fixed_point_texture_units.contains(&active_texture)
-                        || self.state.byte_texture_units.contains(&active_texture));
+                    assert!(
+                        self.state
+                            .fixed_point_texture_units
+                            .contains(&active_texture)
+                            || self.state.byte_texture_units.contains(&active_texture)
+                    );
                     let mut old_client_active_texture: GLenum = 0;
                     gl21::GetIntegerv(
                         gl21::CLIENT_ACTIVE_TEXTURE,
