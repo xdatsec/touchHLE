@@ -390,6 +390,7 @@ const UNSUPPORTED_TEX_PARAMS: ParamTable =
 pub struct GLES1OnGL2State {
     pointer_is_fixed_point: [bool; ARRAYS.len()],
     fixed_point_texture_units: HashSet<GLenum>,
+    byte_texture_units: HashSet<GLenum>,
     fixed_point_translation_buffers: [Vec<GLfloat>; ARRAYS.len()],
 }
 
@@ -409,6 +410,7 @@ impl GLESContext for GLES1OnGL2Context {
             state: GLES1OnGL2State {
                 pointer_is_fixed_point: [false; ARRAYS.len()],
                 fixed_point_texture_units: HashSet::new(),
+                byte_texture_units: HashSet::new(),
                 fixed_point_translation_buffers: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
             },
             is_loaded: false,
@@ -480,6 +482,7 @@ impl GLES1OnGL2<'_> {
             }
 
             // There is one texture co-ordinates pointer per texture unit.
+            let mut byte_tex_coords = false;
             let old_client_active_texture = if array_info.name == gl21::TEXTURE_COORD_ARRAY {
                 // Is the texture unit involved in this draw call fixed-point?
                 // If not, we don't need to do anything.
@@ -488,13 +491,12 @@ impl GLES1OnGL2<'_> {
                     gl21::ACTIVE_TEXTURE,
                     &mut active_texture as *mut _ as *mut _,
                 );
-                if !self
-                    .state
-                    .fixed_point_texture_units
-                    .contains(&active_texture)
+                if !self.state.fixed_point_texture_units.contains(&active_texture)
+                    && !self.state.byte_texture_units.contains(&active_texture)
                 {
                     continue;
                 }
+                byte_tex_coords = self.state.byte_texture_units.contains(&active_texture);
 
                 // Make sure our glTexCoordPointer call will affect that unit.
                 let mut old_client_active_texture: GLenum = 0;
@@ -560,7 +562,7 @@ impl GLES1OnGL2<'_> {
             });
             let stride = if stride == 0 {
                 // tightly packed mode
-                size * 4 // sizeof(gl::FLOAT)
+                size * if byte_tex_coords { 1 } else { 4 }
             } else {
                 stride
             };
@@ -577,9 +579,12 @@ impl GLES1OnGL2<'_> {
                 let stride = stride as usize;
                 for j in first..(first + count) {
                     let vector_ptr: *const GLvoid = pointer.add(j * stride);
-                    let vector_ptr: *const GLfixed = vector_ptr.cast();
                     for k in 0..size {
-                        buffer[j * size + k] = fixed_to_float(vector_ptr.add(k).read_unaligned());
+                        buffer[j * size + k] = if byte_tex_coords {
+                            vector_ptr.cast::<GLbyte>().add(k).read_unaligned() as GLfloat
+                        } else {
+                            fixed_to_float(vector_ptr.cast::<GLfixed>().add(k).read_unaligned())
+                        };
                     }
                 }
             }
@@ -644,10 +649,8 @@ impl GLES1OnGL2<'_> {
                         gl21::ACTIVE_TEXTURE,
                         &mut active_texture as *mut _ as *mut _,
                     );
-                    assert!(self
-                        .state
-                        .fixed_point_texture_units
-                        .contains(&active_texture));
+                    assert!(self.state.fixed_point_texture_units.contains(&active_texture)
+                        || self.state.byte_texture_units.contains(&active_texture));
                     let mut old_client_active_texture: GLenum = 0;
                     gl21::GetIntegerv(
                         gl21::CLIENT_ACTIVE_TEXTURE,
@@ -1292,13 +1295,21 @@ impl GLES for GLES1OnGL2<'_> {
             // Translation deferred until draw call.
             // There is one texture co-ordinates pointer per texture unit.
             self.state.fixed_point_texture_units.insert(active_texture);
+            self.state.byte_texture_units.remove(&active_texture);
+            self.state.pointer_is_fixed_point[2] = true;
+            gl21::TexCoordPointer(size, gl21::FLOAT, stride, pointer)
+        } else if type_ == gles11::BYTE {
+            self.state.fixed_point_texture_units.remove(&active_texture);
+            self.state.byte_texture_units.insert(active_texture);
             self.state.pointer_is_fixed_point[2] = true;
             gl21::TexCoordPointer(size, gl21::FLOAT, stride, pointer)
         } else {
-            // TODO: byte
             assert!(type_ == gl21::SHORT || type_ == gl21::FLOAT);
             self.state.fixed_point_texture_units.remove(&active_texture);
-            if self.state.fixed_point_texture_units.is_empty() {
+            self.state.byte_texture_units.remove(&active_texture);
+            if self.state.fixed_point_texture_units.is_empty()
+                && self.state.byte_texture_units.is_empty()
+            {
                 self.state.pointer_is_fixed_point[2] = false;
             }
             gl21::TexCoordPointer(size, type_, stride, pointer)
